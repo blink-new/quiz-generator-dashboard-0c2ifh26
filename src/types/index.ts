@@ -12,6 +12,8 @@ export interface Quiz {
   topic?: string
   difficulty: 'easy' | 'medium' | 'hard'
   questions: Question[]
+  isTimed?: boolean | string | number
+  timeLimit?: number | null
   userId: string
   createdAt: string
   updatedAt: string

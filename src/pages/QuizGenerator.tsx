@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Upload, BookOpen, Loader2, FileText, Brain } from 'lucide-react'
+import { Upload, BookOpen, Loader2, FileText, Brain, Clock, Timer } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -8,6 +8,7 @@ import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Switch } from '@/components/ui/switch'
 import { blink } from '@/blink/client'
 import { Quiz, Question } from '@/types'
 
@@ -21,6 +22,10 @@ export function QuizGenerator() {
   const [description, setDescription] = useState('')
   const [difficulty, setDifficulty] = useState<'easy' | 'medium' | 'hard'>('medium')
   const [questionCount, setQuestionCount] = useState(10)
+  
+  // Timer settings
+  const [isTimedQuiz, setIsTimedQuiz] = useState(true)
+  const [timeLimit, setTimeLimit] = useState(30) // minutes
   
   // PDF-based generation
   const [pdfFile, setPdfFile] = useState<File | null>(null)
@@ -93,6 +98,8 @@ export function QuizGenerator() {
           correctAnswer: q.correctAnswer,
           explanation: q.explanation
         }))),
+        isTimed: isTimedQuiz,
+        timeLimit: isTimedQuiz ? timeLimit : null,
         userId: user.id,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
@@ -122,20 +129,62 @@ export function QuizGenerator() {
 
       // If PDF file is provided, extract text from it
       if (pdfFile) {
-        console.log('Extracting text from file:', pdfFile.name)
+        console.log('Extracting text from file:', pdfFile.name, 'Type:', pdfFile.type, 'Size:', pdfFile.size)
+        
         try {
-          content = await blink.data.extractFromBlob(pdfFile)
+          // First, try to upload the file to storage and then extract from URL
+          console.log('Uploading file to storage...')
+          const { publicUrl } = await blink.storage.upload(
+            pdfFile,
+            `temp-uploads/${Date.now()}-${pdfFile.name}`,
+            { upsert: true }
+          )
+          console.log('File uploaded to:', publicUrl)
+          
+          // Extract text from the uploaded file URL
+          console.log('Extracting text from URL...')
+          content = await blink.data.extractFromUrl(publicUrl)
           console.log('Extracted content length:', content.length)
+          
+          // Clean up the temporary file after extraction
+          try {
+            await blink.storage.remove(`temp-uploads/${Date.now()}-${pdfFile.name}`)
+          } catch (cleanupError) {
+            console.warn('Could not clean up temporary file:', cleanupError)
+          }
+          
         } catch (extractError) {
           console.error('Error extracting text from file:', extractError)
-          alert('Failed to extract text from the uploaded file. Please try pasting the text manually or use a different file.')
-          return
+          
+          // Fallback: Try direct blob extraction
+          try {
+            console.log('Trying direct blob extraction as fallback...')
+            content = await blink.data.extractFromBlob(pdfFile)
+            console.log('Fallback extraction successful, content length:', content.length)
+          } catch (fallbackError) {
+            console.error('Fallback extraction also failed:', fallbackError)
+            alert(`Failed to extract text from the uploaded file. 
+
+Possible solutions:
+1. Try pasting the text content manually in the text area below
+2. Convert your PDF to a text file (.txt) and upload that instead
+3. Use a different PDF file
+
+Error details: ${extractError instanceof Error ? extractError.message : 'Unknown error'}`)
+            return
+          }
         }
       }
 
       if (!content.trim()) {
-        alert('No content found in the document. Please try a different file or paste text manually.')
+        alert('No content found in the document. The file might be empty, image-based, or corrupted. Please try pasting the text manually or use a different file.')
         return
+      }
+
+      // Limit content length to avoid API limits
+      if (content.length > 50000) {
+        console.log('Content too long, truncating to 50000 characters')
+        content = content.substring(0, 50000) + '...'
       }
 
       console.log('Starting quiz generation from document content')
@@ -198,6 +247,8 @@ export function QuizGenerator() {
           correctAnswer: q.correctAnswer,
           explanation: q.explanation
         }))),
+        isTimed: isTimedQuiz,
+        timeLimit: isTimedQuiz ? timeLimit : null,
         userId: user.id,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
@@ -218,7 +269,36 @@ export function QuizGenerator() {
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
     if (file) {
+      console.log('File selected:', file.name, 'Type:', file.type, 'Size:', file.size)
+      
+      // Check file size (limit to 10MB)
+      if (file.size > 10 * 1024 * 1024) {
+        alert('File size too large. Please select a file smaller than 10MB.')
+        return
+      }
+      
+      // Check file type
+      const allowedTypes = [
+        'application/pdf',
+        'application/msword',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'text/plain',
+        'application/rtf',
+        'text/markdown',
+        'text/x-markdown'
+      ]
+      
+      const allowedExtensions = ['.pdf', '.doc', '.docx', '.txt', '.rtf', '.md']
+      const fileExtension = file.name.toLowerCase().substring(file.name.lastIndexOf('.'))
+      
+      if (!allowedTypes.includes(file.type) && !allowedExtensions.includes(fileExtension)) {
+        alert('Unsupported file type. Please upload a PDF, DOC, DOCX, TXT, RTF, or MD file.')
+        return
+      }
+      
       setPdfFile(file)
+      // Clear the text area when a file is selected
+      setPdfText('')
     }
   }
 
@@ -305,6 +385,49 @@ export function QuizGenerator() {
                     </SelectContent>
                   </Select>
                 </div>
+              </div>
+
+              {/* Timer Settings */}
+              <div className="space-y-4 p-4 bg-gray-50 rounded-lg">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Clock className="h-4 w-4 text-indigo-600" />
+                    <Label htmlFor="timed-quiz" className="text-sm font-medium">
+                      Timed Quiz
+                    </Label>
+                  </div>
+                  <Switch
+                    id="timed-quiz"
+                    checked={isTimedQuiz}
+                    onCheckedChange={setIsTimedQuiz}
+                  />
+                </div>
+                
+                {isTimedQuiz && (
+                  <div className="space-y-2">
+                    <Label htmlFor="time-limit">Time Limit (minutes)</Label>
+                    <Select value={timeLimit.toString()} onValueChange={(value) => setTimeLimit(parseInt(value))}>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="10">10 minutes</SelectItem>
+                        <SelectItem value="15">15 minutes</SelectItem>
+                        <SelectItem value="20">20 minutes</SelectItem>
+                        <SelectItem value="30">30 minutes</SelectItem>
+                        <SelectItem value="45">45 minutes</SelectItem>
+                        <SelectItem value="60">60 minutes</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+                
+                <p className="text-xs text-gray-600">
+                  {isTimedQuiz 
+                    ? `Quiz will have a ${timeLimit}-minute time limit. Students can submit early.`
+                    : 'Quiz will have no time limit. Students can take as long as needed.'
+                  }
+                </p>
               </div>
 
               <Button 
@@ -409,6 +532,49 @@ export function QuizGenerator() {
                     </SelectContent>
                   </Select>
                 </div>
+              </div>
+
+              {/* Timer Settings for PDF */}
+              <div className="space-y-4 p-4 bg-gray-50 rounded-lg">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Clock className="h-4 w-4 text-indigo-600" />
+                    <Label htmlFor="pdf-timed-quiz" className="text-sm font-medium">
+                      Timed Quiz
+                    </Label>
+                  </div>
+                  <Switch
+                    id="pdf-timed-quiz"
+                    checked={isTimedQuiz}
+                    onCheckedChange={setIsTimedQuiz}
+                  />
+                </div>
+                
+                {isTimedQuiz && (
+                  <div className="space-y-2">
+                    <Label htmlFor="pdf-time-limit">Time Limit (minutes)</Label>
+                    <Select value={timeLimit.toString()} onValueChange={(value) => setTimeLimit(parseInt(value))}>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="10">10 minutes</SelectItem>
+                        <SelectItem value="15">15 minutes</SelectItem>
+                        <SelectItem value="20">20 minutes</SelectItem>
+                        <SelectItem value="30">30 minutes</SelectItem>
+                        <SelectItem value="45">45 minutes</SelectItem>
+                        <SelectItem value="60">60 minutes</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+                
+                <p className="text-xs text-gray-600">
+                  {isTimedQuiz 
+                    ? `Quiz will have a ${timeLimit}-minute time limit. Students can submit early.`
+                    : 'Quiz will have no time limit. Students can take as long as needed.'
+                  }
+                </p>
               </div>
 
               <Button 

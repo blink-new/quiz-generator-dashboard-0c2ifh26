@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { Clock, CheckCircle, XCircle, ArrowRight, ArrowLeft } from 'lucide-react'
+import { Clock, CheckCircle, XCircle, ArrowRight, ArrowLeft, Timer } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
@@ -42,8 +42,16 @@ export function TakeQuiz() {
             : quizItem.questions
         }
         setQuiz(parsedQuiz)
-        // Set timer for 2 minutes per question
-        setTimeLeft(parsedQuiz.questions.length * 120)
+        
+        // Set timer based on quiz settings
+        if (Number(parsedQuiz.isTimed) > 0 && parsedQuiz.timeLimit) {
+          // Convert minutes to seconds
+          setTimeLeft(parsedQuiz.timeLimit * 60)
+        } else {
+          // No time limit
+          setTimeLeft(0)
+        }
+        
         setStartTime(new Date())
       } else {
         navigate('/generate')
@@ -107,9 +115,12 @@ export function TakeQuiz() {
     loadQuiz()
   }, [loadQuiz])
 
-  // Timer countdown
+  // Timer countdown (only for timed quizzes)
   useEffect(() => {
-    if (!startTime || isCompleted || timeLeft <= 0) return
+    if (!startTime || isCompleted || !quiz) return
+    
+    // Only run timer for timed quizzes
+    if (Number(quiz.isTimed) === 0 || timeLeft === 0) return
 
     const timer = setInterval(() => {
       setTimeLeft(prev => {
@@ -122,7 +133,7 @@ export function TakeQuiz() {
     }, 1000)
 
     return () => clearInterval(timer)
-  }, [startTime, isCompleted, timeLeft, handleSubmitQuiz])
+  }, [startTime, isCompleted, timeLeft, handleSubmitQuiz, quiz])
 
   const handleAnswerSelect = (questionId: string, answerIndex: number) => {
     setAnswers(prev => ({
@@ -288,6 +299,7 @@ export function TakeQuiz() {
 
   const currentQuestion = quiz.questions[currentQuestionIndex]
   const progress = ((currentQuestionIndex + 1) / quiz.questions.length) * 100
+  const isTimedQuiz = Number(quiz.isTimed) > 0
 
   return (
     <div className="max-w-4xl mx-auto space-y-6">
@@ -301,17 +313,35 @@ export function TakeQuiz() {
                 <Badge className={getDifficultyColor(quiz.difficulty)}>
                   {quiz.difficulty}
                 </Badge>
+                {!isTimedQuiz && (
+                  <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200">
+                    <Timer className="h-3 w-3 mr-1" />
+                    No Time Limit
+                  </Badge>
+                )}
               </CardTitle>
               <CardDescription>{quiz.description}</CardDescription>
             </div>
             <div className="text-right">
-              <div className="flex items-center gap-2 text-lg font-semibold">
-                <Clock className="h-5 w-5" />
-                <span className={timeLeft < 60 ? 'text-red-600' : 'text-gray-900'}>
-                  {formatTime(timeLeft)}
-                </span>
-              </div>
-              <p className="text-sm text-gray-600">Time Remaining</p>
+              {isTimedQuiz ? (
+                <>
+                  <div className="flex items-center gap-2 text-lg font-semibold">
+                    <Clock className="h-5 w-5" />
+                    <span className={timeLeft < 60 ? 'text-red-600' : 'text-gray-900'}>
+                      {formatTime(timeLeft)}
+                    </span>
+                  </div>
+                  <p className="text-sm text-gray-600">Time Remaining</p>
+                </>
+              ) : (
+                <>
+                  <div className="flex items-center gap-2 text-lg font-semibold text-green-600">
+                    <Timer className="h-5 w-5" />
+                    <span>No Time Limit</span>
+                  </div>
+                  <p className="text-sm text-gray-600">Take your time</p>
+                </>
+              )}
             </div>
           </div>
         </CardHeader>
@@ -371,7 +401,6 @@ export function TakeQuiz() {
             {currentQuestionIndex === quiz.questions.length - 1 ? (
               <Button
                 onClick={handleSubmitQuiz}
-                disabled={Object.keys(answers).length !== quiz.questions.length}
                 className="bg-green-600 hover:bg-green-700"
               >
                 Submit Quiz
@@ -415,6 +444,30 @@ export function TakeQuiz() {
           </div>
         </CardContent>
       </Card>
+
+      {/* Early Submit Option */}
+      {!isTimedQuiz && (
+        <Card className="bg-amber-50 border-amber-200">
+          <CardContent className="pt-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="font-medium text-amber-900">Ready to submit?</h3>
+                <p className="text-sm text-amber-700">
+                  You can submit your quiz at any time. Make sure you've answered all questions.
+                </p>
+              </div>
+              <Button
+                onClick={handleSubmitQuiz}
+                variant="outline"
+                className="border-amber-300 text-amber-700 hover:bg-amber-100"
+              >
+                Submit Early
+                <CheckCircle className="h-4 w-4 ml-2" />
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
     </div>
   )
 }
